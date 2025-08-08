@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<title>Efteling Quest — Web demo</title>
+<style>
+  html,body { height:100%; margin:0; background: linear-gradient(#07112b,#0b2b3f); font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:#fff; -webkit-touch-callout:none; -webkit-user-select:none; }
+  #gameWrapper { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; padding:10px; box-sizing:border-box; }
+  canvas { background: radial-gradient(circle at 30% 20%, #16324a 0%, #0b1a2a 40%), #022033; border-radius:12px; box-shadow: 0 10px 30px rgba(0,0,0,0.7); touch-action: none; }
+  #hud { width:100%; max-width:480px; margin-top:10px; display:flex; gap:8px; align-items:center; justify-content:space-between; }
+  .panel { background: rgba(255,255,255,0.04); padding:8px 10px; border-radius:10px; font-size:14px; min-width:0; }
+  #controls { display:flex; gap:6px; align-items:center; }
+  .btn { background: rgba(255,255,255,0.06); border-radius:10px; padding:8px 12px; font-weight:600; border:1px solid rgba(255,255,255,0.06); }
+  #message { min-height:38px; }
+  #overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+  #menu { pointer-events:auto; background:linear-gradient(#062033,#072b3f); padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,0.06); width:90%; max-width:480px; box-shadow:0 12px 30px rgba(0,0,0,0.6); }
+  .row { display:flex; gap:8px; margin-bottom:8px; }
+  .bigBtn { flex:1; padding:12px; border-radius:10px; background:linear-gradient(#0b4267,#084058); text-align:center; font-weight:700; }
+  #footer { font-size:12px; opacity:0.8; margin-top:8px; }
+  /* on-screen joystick */
+  #joystick { position: absolute; left:12px; bottom:90px; width:120px; height:120px; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+  .stick { width:64px; height:64px; background:rgba(255,255,255,0.06); border-radius:50%; display:flex; align-items:center; justify-content:center; pointer-events:auto; touch-action:none; }
+  .touchBtn { position:absolute; right:12px; bottom:90px; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+  .touchBtn button { pointer-events:auto; padding:12px 14px; border-radius:10px; background:rgba(255,255,255,0.06); border:none; color:#fff; font-weight:700; }
+  /* small screen adjustments */
+  @media (max-width:420px){
+    #joystick { left:8px; bottom:80px; transform:scale(0.9); }
+    .touchBtn { right:8px; bottom:80px; transform:scale(0.95); }
+  }
+</style>
+</head>
+<body>
+<div id="gameWrapper">
+  <canvas id="game" width="720" height="600" aria-label="Efteling Quest spel"></canvas>
+  <div id="hud">
+    <div class="panel" id="playerInfo">Speler: <strong>Jasper</strong> • Level <span id="playerLevel">1</span></div>
+    <div class="panel" id="message">Welkom bij <strong>Efteling Quest</strong> — vind sprookjesfiguren en verzamel ze!</div>
+    <div id="controls" style="min-width:150px">
+      <div class="btn" id="btnInventory">Inventaris</div>
+      <div class="btn" id="btnRestart">Herstart</div>
+    </div>
+  </div>
+  <div id="footer">Tip: Gebruik de joystick of swipe op het scherm. Tap 'Actie' om te interacteren.</div>
+</div>
+
+<div id="overlay">
+  <div id="menu" role="dialog" aria-modal="true">
+    <div class="row">
+      <div class="bigBtn" id="startBtn">Start Speel</div>
+      <div class="bigBtn" id="howBtn">Hoe te spelen</div>
+    </div>
+    <div class="row">
+      <div class="bigBtn" id="aboutBtn">Over deze demo</div>
+    </div>
+  </div>
+</div>
+
+<div id="joystick">
+  <div class="stick" id="stick">☽</div>
+</div>
+<div class="touchBtn">
+  <button id="actionBtn">Actie</button>
+  <button id="catchBtn">Vang</button>
+</div>
+
+<script>
+// --- Simple Efteling Quest Web Demo ---
+// Single-file, no external assets. Works on iPhone Safari.
+// Controls: on-screen stick (drag), swipe to move, action and catch buttons for encounters.
+
+// Canvas & context
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Scaling for different screens
+function fitCanvas(){
+  const maxW = Math.min(window.innerWidth - 20, 480);
+  const scale = maxW / canvas.width;
+  canvas.style.width = Math.round(canvas.width * scale) + 'px';
+  canvas.style.height = Math.round(canvas.height * scale) + 'px';
+}
+fitCanvas();
+window.addEventListener('resize', fitCanvas);
+
+// Game state
+let running = false;
+let player = { x: 360, y: 300, size:18, color:'#ffd166', level:1, xp:0 };
+let keys = {};
+let lastTime = 0;
+let messageEl = document.getElementById('message');
+let playerLevelEl = document.getElementById('playerLevel');
+playerLevelEl.textContent = player.level;
+
+// Map definition (simple)
+const map = {
+  width: 2000,
+  height: 1400,
+  regions: [
+    { name:'Droomvlucht', x:200, y:120, w:800, h:500, color:'#16324a' },
+    { name:'Symbolica', x:1050, y:120, w:800, h:500, color:'#194c39' },
+    { name:'Fata Morgana', x:200, y:700, w:800, h:600, color:'#3a2850' },
+    { name:'Sprookjesbos', x:1050, y:700, w:800, h:600, color:'#123b2e' },
+  ]
+};
+
+// Camera
+let cam = { x: player.x - canvas.width/2, y: player.y - canvas.height/2, w: canvas.width, h: canvas.height };
+
+// Creatures (sprookjesfiguren) available to find
+const critterTemplates = [
+  { id:'elfje', name:'Elfje', color:'#9be7ff', maxHp:12, power:3, rarity:0.5 },
+  { id:'kabouter', name:'Kabouter', color:'#ffcf9b', maxHp:18, power:4, rarity:0.35 },
+  { id:'fakir', name:'Fakir', color:'#ffd6f0', maxHp:22, power:5, rarity:0.12 },
+  { id:'nachtvogel', name:'Nachtvogel', color:'#c7c7ff', maxHp:28, power:7, rarity:0.03 }
+];
+
+// Player collection
+let collection = [];
+
+// Random utility
+function rnd(min,max){ return Math.random()*(max-min)+min; }
+
+// Messages
+function showMessage(t, time=3000){
+  messageEl.textContent = t;
+  if(time>0){
+    setTimeout(()=>{ if(messageEl.textContent === t) messageEl.textContent = ''; }, time);
+  }
+}
+
+// Game entities on map (flowers, benches, etc) for visuals
+let scenery = [];
+for(let i=0;i<80;i++){
+  scenery.push({ x:rnd(80,map.width-80), y:rnd(80,map.height-80), size:rnd(6,18), hue: Math.random()*360 });
+}
+
+// Encounters
+let inEncounter = false;
+let currentCritter = null;
+let encounterState = null; // {hp, maxHp, power}
+
+// Spawn critter near player (random encounter)
+function tryEncounter(){
+  if(inEncounter) return;
+  const chance = 0.02 + Math.min(0.12, 0.01 * player.level);
+  if(Math.random() < chance){
+    // pick by rarity
+    let pick = Math.random();
+    let sum=0;
+    let chosen = critterTemplates[0];
+    for(const c of critterTemplates){ sum += c.rarity; if(pick < sum){ chosen=c; break; } }
+    currentCritter = {
+      ...chosen,
+      hp: chosen.maxHp + Math.floor(player.level*1.5 * (Math.random())),
+      maxHp: chosen.maxHp + Math.floor(player.level*1.2)
+    };
+    inEncounter = true;
+    encounterState = { hp: currentCritter.hp, maxHp: currentCritter.maxHp };
+    showMessage(`Een ${currentCritter.name} verschijnt! Gebruik Actie of Vang.`);
+  }
+}
+
+// Game loop
+function update(dt){
+  if(!running) return;
+  // Simple input motion
+  const speed = 120 + player.level*8; // px/sec
+  let dx = 0, dy = 0;
+  if(keys.left) dx -= 1;
+  if(keys.right) dx += 1;
+  if(keys.up) dy -= 1;
+  if(keys.down) dy += 1;
+  // normalize
+  if(dx !== 0 || dy !== 0){
+    const len = Math.sqrt(dx*dx + dy*dy);
+    dx /= len; dy /= len;
+    player.x += dx * speed * dt;
+    player.y += dy * speed * dt;
+    // bounds
+    player.x = Math.max(20, Math.min(map.width-20, player.x));
+    player.y = Math.max(20, Math.min(map.height-20, player.y));
+  } else {
+    // small chance of auto-encounter while idle
+    if(Math.random() < 0.002) tryEncounter();
+  }
+  // camera follow
+  cam.x = player.x - canvas.width/2;
+  cam.y = player.y - canvas.height/2;
+  cam.x = Math.max(0, Math.min(map.width - canvas.width, cam.x));
+  cam.y = Math.max(0, Math.min(map.height - canvas.height, cam.y));
+
+  // random encounter chance while moving
+  if((dx !== 0 || dy !== 0) && Math.random() < 0.01) tryEncounter();
+}
+
+function draw(){
+  // sky / background
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // draw regions
+  for(const r of map.regions){
+    ctx.fillStyle = r.color;
+    // region position relative to cam
+    const rx = r.x - cam.x, ry = r.y - cam.y;
+    ctx.fillRect(rx, ry, r.w, r.h);
+    // label
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(rx+6, ry+6, 140, 26);
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px system-ui';
+    ctx.fillText(r.name, rx+12, ry+24);
+  }
+  // draw scenery
+  for(const s of scenery){
+    const sx = s.x - cam.x, sy = s.y - cam.y;
+    if(sx < -50 || sx > canvas.width+50 || sy < -50 || sy > canvas.height+50) continue;
+    ctx.beginPath();
+    ctx.fillStyle = `hsla(${s.hue},60%,60%,0.9)`;
+    ctx.arc(sx, sy, s.size* (0.6 + (Math.sin(s.x*0.01 + s.y*0.02)*0.25)), 0, Math.PI*2);
+    ctx.fill();
+  }
+  // draw player halo
+  const px = player.x - cam.x, py = player.y - cam.y;
+  ctx.beginPath();
+  ctx.fillStyle = 'rgba(255,209,102,0.15)';
+  ctx.arc(px, py, player.size+12, 0, Math.PI*2);
+  ctx.fill();
+
+  // draw player
+  ctx.beginPath();
+  ctx.fillStyle = player.color;
+  ctx.arc(px, py, player.size, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = '#fff2';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // draw collection count
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(8,8,160,36);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px system-ui';
+  ctx.fillText(`Verzameld: ${collection.length}`, 14, 30);
+
+  // if encounter, draw critter big
+  if(inEncounter && currentCritter){
+    // dark overlay
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    // critter box
+    const w = 560, h = 280;
+    const x = (canvas.width-w)/2, y = (canvas.height-h)/2;
+    // box
+    ctx.fillStyle = '#072b3f';
+    ctx.fillRect(x,y,w,h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.strokeRect(x,y,w,h);
+    // critter artwork (circle)
+    ctx.beginPath();
+    ctx.fillStyle = currentCritter.color;
+    ctx.arc(x+140, y+130, 80, 0, Math.PI*2);
+    ctx.fill();
+    // critter name and hp
+    ctx.fillStyle = '#fff';
+    ctx.font = '22px system-ui';
+    ctx.fillText(currentCritter.name, x+260, y+70);
+    ctx.font = '16px system-ui';
+    ctx.fillText(`HP: ${encounterState.hp} / ${encounterState.maxHp}`, x+260, y+100);
+    // action hints
+    ctx.font = '14px system-ui';
+    ctx.fillText('Gebruik "Actie" om te vechten. Gebruik "Vang" om te proberen te vangen.', x+40, y+200);
+  }
+}
+
+// Simple battle action
+function actionAttack(){
+  if(!inEncounter) { showMessage('Niets om mee te vechten.'); return; }
+  const dmg = Math.max(1, Math.floor(3 + player.level*0.6 + Math.random()*3));
+  encounterState.hp -= dmg;
+  showMessage(`Je raakt ${currentCritter.name} voor ${dmg} schade!`, 1800);
+  if(encounterState.hp <= 0){
+    // defeated
+    inEncounter = false;
+    const gainedXp = Math.floor(5 + Math.random()*8 + player.level);
+    player.xp += gainedXp;
+    showMessage(`Je hebt de ${currentCritter.name} verslagen! +${gainedXp} XP`, 2500);
+    maybeLevelUp();
+    currentCritter = null;
+    encounterState = null;
+  } else {
+    // critter counterattack
+    setTimeout(()=> {
+      const cdmg = Math.max(1, Math.floor(currentCritter.power + Math.random()*4));
+      playerHealthTick(cdmg);
+      showMessage(`${currentCritter.name} valt terug en doet ${cdmg} schade!`, 1600);
+    }, 600);
+  }
+}
+
+let playerHp = 30;
+function playerHealthTick(dmg){
+  playerHp -= dmg;
+  if(playerHp <= 0){
+    showMessage('Je bent verslagen! Je hoort een nachtelijke wieg zingen... Respawn.', 2500);
+    // respawn
+    playerHp = 30 + player.level*2;
+    player.x = 360; player.y = 300;
+    inEncounter = false; currentCritter = null; encounterState = null;
+  }
+}
+
+// Try to catch
+function tryCatch(){
+  if(!inEncounter) { showMessage('Er is niets om te vangen.'); return; }
+  // capture chance depends on critter HP and player level
+  const hpFactor = 1 - (encounterState.hp / encounterState.maxHp);
+  let baseChance = 0.25 + hpFactor*0.5 + Math.min(0.2, player.level*0.02);
+  // rarer critters harder
+  if(currentCritter.rarity < 0.15) baseChance *= 0.6;
+  const roll = Math.random();
+  if(roll < baseChance){
+    // success
+    collection.push({ id: currentCritter.id, name: currentCritter.name, color: currentCritter.color, level: player.level });
+    inEncounter = false;
+    showMessage(`Gevangen! ${currentCritter.name} is nu jouw kikkertje 🐸`, 2800);
+    currentCritter = null; encounterState = null;
+    // small XP
+    player.xp += 6 + Math.floor(Math.random()*6);
+    maybeLevelUp();
+  } else {
+    showMessage('De vangpoging mislukte! Het creature ontsnapt een beetje...', 2000);
+    // critter may counterattack
+    setTimeout(()=> {
+      const cdmg = Math.max(1, Math.floor(currentCritter.power + Math.random()*3));
+      playerHealthTick(cdmg);
+      showMessage(`${currentCritter.name} bijt terug en doet ${cdmg} schade.`, 1600);
+    }, 500);
+  }
+}
+
+function maybeLevelUp(){
+  const need = 10 + player.level*8;
+  if(player.xp >= need){
+    player.level++;
+    player.xp = Math.max(0, player.xp - need);
+    playerLevelEl.textContent = player.level;
+    playerHp = 30 + player.level*3;
+    showMessage(`Level omhoog! Je bent nu level ${player.level}.`, 2600);
+  }
+}
+
+// Input handling (keyboard)
+window.addEventListener('keydown', (e)=>{
+  if(e.key==='ArrowLeft' || e.key==='a') keys.left = true;
+  if(e.key==='ArrowRight' || e.key==='d') keys.right = true;
+  if(e.key==='ArrowUp' || e.key==='w') keys.up = true;
+  if(e.key==='ArrowDown' || e.key==='s') keys.down = true;
+  if(e.key===' '){ actionAttack(); }
+});
+window.addEventListener('keyup', (e)=>{
+  if(e.key==='ArrowLeft' || e.key==='a') keys.left = false;
+  if(e.key==='ArrowRight' || e.key==='d') keys.right = false;
+  if(e.key==='ArrowUp' || e.key==='w') keys.up = false;
+  if(e.key==='ArrowDown' || e.key==='s') keys.down = false;
+});
+
+// Touch joystick
+const stick = document.getElementById('stick');
+let stickTouchId = null;
+let baseX=0, baseY=0;
+stick.addEventListener('touchstart', (ev)=>{
+  ev.preventDefault();
+  const t = ev.changedTouches[0];
+  stickTouchId = t.identifier;
+  baseX = t.clientX; baseY = t.clientY;
+});
+stick.addEventListener('touchmove', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches){
+    if(t.identifier === stickTouchId){
+      const dx = t.clientX - baseX;
+      const dy = t.clientY - baseY;
+      const max = 50;
+      const nx = Math.max(-1, Math.min(1, dx/max));
+      const ny = Math.max(-1, Math.min(1, dy/max));
+      keys.left = nx < -0.3;
+      keys.right = nx > 0.3;
+      keys.up = ny < -0.3;
+      keys.down = ny > 0.3;
+      // move visual
+      stick.style.transform = `translate(${nx*24}px, ${ny*24}px)`;
+    }
+  }
+});
+stick.addEventListener('touchend', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches){
+    if(t.identifier === stickTouchId){
+      stickTouchId = null;
+      keys.left = keys.right = keys.up = keys.down = false;
+      stick.style.transform = `translate(0px,0px)`;
+    }
+  }
+});
+
+// Swipe movement (full screen)
+let swipeStart = null;
+canvas.addEventListener('touchstart', (ev)=>{
+  if(ev.touches.length===1){
+    swipeStart = { x:ev.touches[0].clientX, y:ev.touches[0].clientY, t:Date.now() };
+  }
+}, {passive:true});
+canvas.addEventListener('touchend', (ev)=>{
+  if(swipeStart && ev.changedTouches.length===1){
+    const dx = ev.changedTouches[0].clientX - swipeStart.x;
+    const dy = ev.changedTouches[0].clientY - swipeStart.y;
+    const dt = Date.now() - swipeStart.t;
+    if(dt < 400 && Math.hypot(dx,dy) > 30){
+      // quick swipe -> dash
+      player.x += (dx/Math.abs(dx||1)) * 60;
+      player.y += (dy/Math.abs(dy||1)) * 60;
+      player.x = Math.max(20, Math.min(map.width-20, player.x));
+      player.y = Math.max(20, Math.min(map.height-20, player.y));
+    }
+  }
+  swipeStart = null;
+}, {passive:true});
+
+// Action & Catch buttons
+document.getElementById('actionBtn').addEventListener('click', ()=> actionAttack());
+document.getElementById('catchBtn').addEventListener('click', ()=> tryCatch());
+document.getElementById('btnRestart').addEventListener('click', ()=> location.reload());
+document.getElementById('btnInventory').addEventListener('click', ()=> showInventory());
+
+// Menu buttons
+document.getElementById('startBtn').addEventListener('click', ()=> {
+  document.getElementById('overlay').style.display = 'none';
+  running = true;
+  showMessage('Wandel door de parken en vind sprookjesfiguren. Veel plezier! ✨', 3500);
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+});
+document.getElementById('howBtn').addEventListener('click', ()=> {
+  alert('Hoe te spelen:\\n- Gebruik de joystick links of swipe om te bewegen.\\n- Als een figuur verschijnt: gebruik Actie om te vechten of Vang om te proberen te vangen.\\n- Verzamel figuren in je inventaris.\\n- Voeg toe aan beginscherm op iPhone voor fullscreen.');
+});
+document.getElementById('aboutBtn').addEventListener('click', ()=> {
+  alert('Efteling Quest — demo door ChatGPT. Geen officiële Efteling-app. Alleen een demo om te spelen in Safari.');
+});
+
+// Inventory display
+function showInventory(){
+  let text = `Inventaris (${collection.length}):\\n`;
+  if(collection.length===0) text += 'Nog niets gevangen.';
+  else {
+    collection.forEach((c,i)=> text += `${i+1}. ${c.name} (lvl ${c.level})\\n`);
+  }
+  alert(text);
+}
+
+// Main loop
+function loop(t){
+  const dt = Math.min(0.06, (t - lastTime)/1000);
+  lastTime = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// small autoplay audio beep to signal capture (generated)
+function beep(freq=440, duration=0.08, vol=0.12){
+  try{
+    const ctxA = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctxA.createOscillator();
+    const g = ctxA.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq;
+    g.gain.value = vol;
+    o.connect(g); g.connect(ctxA.destination);
+    o.start();
+    g.gain.setTargetAtTime(0, ctxA.currentTime + duration, 0.02);
+    setTimeout(()=>{ o.stop(); ctxA.close?.(); }, duration*1000 + 50);
+  }catch(e){}
+}
+
+// small hook to play a beep on successful capture
+const originalTryCatch = tryCatch;
+tryCatch = function(){
+  const preLen = collection.length;
+  originalTryCatch();
+  setTimeout(()=> {
+    if(collection.length > preLen) beep(700,0.12,0.14);
+  }, 350);
+}
+
+// Quick save to localStorage (collection)
+setInterval(()=> {
+  try{
+    localStorage.setItem('efteling_collection', JSON.stringify(collection));
+    localStorage.setItem('efteling_player', JSON.stringify(player));
+  }catch(e){}
+}, 2000);
+
+// Try to restore
+try{
+  const saved = localStorage.getItem('efteling_collection');
+  const sp = localStorage.getItem('efteling_player');
+  if(saved) collection = JSON.parse(saved);
+  if(sp) { const p = JSON.parse(sp); player.level = p.level || player.level; player.xp = p.xp || player.xp; playerLevelEl.textContent = player.level; }
+}catch(e){}
+
+// Small accessibility: focus start button
+document.getElementById('startBtn').focus();
+</script>
+</body>
+</html>
