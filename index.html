@@ -1,0 +1,92 @@
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Magisch Tetrisrijk voor Delaya</title>
+    <style>
+        body {
+            background: url('background.jpg') no-repeat center center fixed;
+            background-size: cover;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+            color: #fff;
+            text-align: center;
+        }
+        h1 {
+            margin-top: 20px;
+            font-size: 2em;
+            text-shadow: 2px 2px 5px #000;
+        }
+        canvas {
+            display: block;
+            margin: 20px auto;
+            background: rgba(0,0,0,0.5);
+            border: 2px solid white;
+        }
+    </style>
+</head>
+<body>
+    <audio autoplay loop>
+        <source src="muziek.mp3" type="audio/mpeg">
+        Je browser ondersteunt geen audio.
+    </audio>
+    <h1>Welkom in het magische Tetrisrijk, Delaya 🐸💖</h1>
+    <canvas id="game" width="240" height="400"></canvas>
+    <script>
+        const canvas = document.getElementById("game");
+        const context = canvas.getContext("2d");
+        context.scale(20, 20);
+
+        function createMatrix(w, h) {
+            const matrix = [];
+            while (h--) matrix.push(new Array(w).fill(0));
+            return matrix;
+        }
+
+        function createPiece(type) {
+            if (type === 'T') return [[0,0,0],[1,1,1],[0,1,0]];
+            if (type === 'O') return [[2,2],[2,2]];
+            if (type === 'L') return [[0,3,0],[0,3,0],[0,3,3]];
+            if (type === 'J') return [[0,4,0],[0,4,0],[4,4,0]];
+            if (type === 'I') return [[0,5,0,0],[0,5,0,0],[0,5,0,0],[0,5,0,0]];
+            if (type === 'S') return [[0,6,6],[6,6,0],[0,0,0]];
+            if (type === 'Z') return [[7,7,0],[0,7,7],[0,0,0]];
+        }
+
+        function drawMatrix(matrix, offset) {
+            matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        context.fillStyle = 'hsl(' + (value * 50) + ', 100%, 70%)';
+                        context.fillRect(x + offset.x, y + offset.y, 1, 1);
+                    }
+                });
+            });
+        }
+
+        function draw() {
+            context.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            drawMatrix(player.matrix, player.pos);
+        }
+
+        function playerReset() {
+            const pieces = 'ILJOTSZ';
+            player.matrix = createPiece(pieces[Math.floor(Math.random() * pieces.length)]);
+            player.pos.y = 0;
+            player.pos.x = (arena[0].length / 2 | 0) - (player.matrix[0].length / 2 | 0);
+        }
+
+        const arena = createMatrix(12, 20);
+        const player = {
+            pos: {x: 5, y: 5},
+            matrix: null,
+        };
+
+        playerReset();
+        draw();
+    </script>
+</body>
+</html>
